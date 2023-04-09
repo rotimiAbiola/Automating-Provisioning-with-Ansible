@@ -1,0 +1,12 @@
+- name: Ansible Playbook to provision a VPC network and 2 EC2 instances attached to an Application LB
+  hosts: localhost
+  remote_user: "{{ remote_user }}"
+  gather_facts: false
+  vars_files:
+    - vars/info.yml
+  tasks:
+    - include: tasks/network.yml
+    - include: tasks/instance.yml
+    - include: tasks/load-balancer.yml
+
+

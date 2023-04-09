@@ -1,0 +1,49 @@
+- name: Find Ubuntu AMIs
+  ec2_ami_info:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    owners: 099720109477
+    filters:
+      architecture: x86_64
+      name: ubuntu*jammy-22.04*
+  register: amis
+
+- name: Display the amis output
+  debug: 
+    var: amis
+
+- name: get the latest ami
+  set_fact:
+    latest_ami: "{{ amis.images | sort(attribute='creation_date') | last }}"
+
+- name: Add a SSH key
+  ec2_key:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    name: "{{ ssh_keyname }}"
+    key_material: "{{ lookup('file', '/home/godzilla/.ssh/alt-.pem') }}"
+  register: alt_ssh_key
+
+- name: Provision app servers
+  ec2:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    image: "{{ latest_ami.image_id }}"
+    instance_type: t2.micro
+    count: 2
+    user_data: "{{ lookup('file', '../userdata.sh') }}"
+    key_name: "{{ ssh_keyname }}"
+    group_id: 
+      - "{{ alt_vpc_sg.group_id }}"
+    wait: true
+    vpc_subnet_id: "{{ private_subnet.subnet.id }}"
+    instance_tags: 
+      Name: "app-server" 
+  register: app_servers
+
+- name: Print result of app servers provisioning
+  debug:
+    var: app_servers

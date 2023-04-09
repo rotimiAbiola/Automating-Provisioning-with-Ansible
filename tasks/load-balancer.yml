@@ -1,0 +1,40 @@
+- name: Create a target group with instance as targets
+  elb_target_group:
+    name: app_servers_TG
+    aws_access_key: "{{ aws_id }}"
+    aws_secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    protocol: http
+    port: 81
+    vpc_id: "{{ ansibleVPC.vpc.id }}"
+    health_check_protocol: http
+    health_check_path: /
+    successful_response_codes: "200,250-260"
+    targets:
+        - Id: "{{ app_servers.instance_ids }}"
+          Port: 80
+    state: present
+    wait_timeout: 200
+    wait: True
+    
+
+- name: Create Load Balancer
+  community.aws.elb_application_lb:
+    aws_access_key: "{{ aws_id }}"
+    aws_secret_key: "{{ aws_key }}"
+    name: Alt_LB
+    region: "{{ aws_region }}" 
+    state: present
+    security_groups:
+        - "{{ load_balancer_sg.group_id }}" 
+    subnets: 
+        - "{{ public_subnet_1.subnet.id }}"
+        - "{{ public_subnet_2.subnet.id }}"
+    listeners:
+        - Protocol: HTTP
+          Port: 80
+          DefaultActions:
+            - Type: forward 
+              TargetGroupName: app_servers_TG      
+  register: Alt_LB
+

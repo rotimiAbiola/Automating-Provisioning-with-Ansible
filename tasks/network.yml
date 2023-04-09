@@ -1,0 +1,214 @@
+---
+- name: Create a VPC Network
+  ec2_vpc_net: 
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    name: altVPC
+    cidr_block: 10.0.0.0/16
+    dns_hostnames: true
+    dns_support: true
+    state: present
+    tags:
+      name: ansibleVPC
+    tenancy: default
+  register: ansibleVPC
+
+- name: vpc output
+  debug:
+    var: ansibleVPC
+
+- name: Create an Internet Gateway and attach to the VPC
+  ec2_vpc_igw: 
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    vpc_id: "{{ ansibleVPC.vpc.id }}"
+    state: present
+    tags:
+      name: alt_vpc_igw
+  register: ansibleVPC_igw
+
+- name: display ansibleVPC IGW details
+  debug: 
+    var: ansibleVPC_igw
+
+- name: create public subnet 1 in "{{ aws_region }}"
+  ec2_vpc_subnet:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    state: present
+    cidr: 10.0.1.0/24
+    map_public: yes
+    vpc_id: "{{ ansibleVPC.vpc.id }}"
+    tags:
+      Name: public subnet_1
+  register: public_subnet_1
+
+- name: show public subnet details
+  debug: 
+    var: public_subnet_1  
+
+- name: create public subnet 2 in "{{ aws_region }}"
+  ec2_vpc_subnet:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    state: present
+    cidr: 10.0.1.0/24
+    map_public: yes
+    vpc_id: "{{ ansibleVPC.vpc.id }}"
+    tags:
+      Name: public subnet_2
+  register: public_subnet_2
+
+- name: show public subnet details
+  debug: 
+    var: public_subnet_2 
+
+- name: create a private subnet in "{{ aws_region }}"
+  ec2_vpc_subnet:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    state: present
+    cidr: 10.0.2.0/24
+    map_public: false
+    vpc_id: "{{ ansibleVPC.vpc.id }}"
+    tags:
+      Name: private subnet
+  register: private_subnet
+
+- name: show private subnet details
+  debug: 
+    var: private_subnet  
+
+- name: create a NAT Gateway and associate to the public subnet
+  ec2_vpc_nat_gateway:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    state: present
+    wait: true
+    if_exist_do_not_create: true
+    release_eip: true
+    subnet_id: "{{ public_subnet.subnet.id }}" 
+    tags: 
+      Name: alt nat gateway  
+  register: alt_nat_gateway 
+
+- name: display nat_gateway details
+  debug:
+  var: alt_nat_gateway
+
+- name: create a route table for public subnet
+  ec2_vpc_route_table:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    state: present
+    vpc_id: "{{ ansibleVPC.vpc.id }}"
+    tags:
+      Name: alt_public_rt
+    subnets: 
+      - "{{ public_subnet_1.subnet.id }}"
+      - "{{ public_subnet_2.subnet.id }}"
+    routes:
+      - dest: 0.0.0.0/0
+        gateway_id: "{{ ansibleVPC_igw.gateway_id }}"
+  register: alt_public_rt
+
+- name: display public route table
+  debug: 
+    var: alt_public_rt
+
+- name: create a route table for private subnet
+  ec2_vpc_route_table:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    state: present
+    vpc_id: "{{ ansibleVPC.vpc.id }}"
+    tags:
+      Name: alt_private_rt
+    subnets: 
+      - "{{ private_subnet.subnet.id }}"
+    routes:
+      - dest: 0.0.0.0/0
+        gateway_id: "{{ alt_nat_gateway.nat_gateway_id }}"
+  register: alt_private_rt
+
+- name: display private route table
+  debug: 
+    var: alt_private_rt
+
+- name: Create Security Group for Application LB
+  ec2_group:
+    aws_access_key: "{{ aws_id }}"
+    aws_secret_key: "{{ aws_key }}"
+    vpc_id: "{{ ansibleVPC.vpc.id }}"
+    region: "{{ aws_region }}"
+    name: "ALB SG"
+    description: "ALB_Security_Group"
+    tags: 
+      name: ALB Security Group
+    rules:
+      - proto: "tcp"
+        ports:
+          - 80
+          - 443
+        cidr_ip: 0.0.0.0/0
+  register: load_balancer_sg
+
+- name: Set ALB Security Group ID in variable
+  set_fact:
+  sg_id: "{{ load_balancer_sg }}"
+
+- name: Create Security Group for EC2 instance
+  ec2_group:
+    access_key: "{{ aws_id }}"
+    secret_key: "{{ aws_key }}"
+    region: "{{ aws_region }}"
+    state: present
+    vpc_id: "{{ ansibleVPC.vpc.id }}"
+    name: "Alt SG"  
+    description: "default security group for the alt_vpc"  
+    tags:
+      Name: Default Alt SG
+    rules: 
+      - proto: "tcp"
+        to_port: "22"
+        from_port: "22"
+        cidr_ip: 0.0.0.0/0
+      - proto: "tcp"
+        to_port: "80"
+        from_port: "80"
+        group_id: "{{ load_balancer_sg.group_id }}"
+      - proto: "tcp"
+        to_port: "443"
+        from_port: "443"
+  register: alt_vpc_sg
+
+- name: Set Security Group ID in variable
+  set_fact:
+    sg_id: "{{ alt_vpc_sg.group_id }}"
+
+# - name: Create the ELB only listening over port 80
+#   elb_application_lb:
+#     name: "app-load-balancer"
+#     state: present
+#     access_key: "{{ aws_id }}"
+#     secret_key: "{{ aws_key }}"
+#     region: "{{ aws_region }}"
+#     security_groups: []
+#     scheme: internet-facing
+#     subnets: 
+#       - "{{ public_subnet.subnet.id }}"
+#     listeners:
+#       - Protocol: http
+#         Port: 80
+#         DefaultActions:
+#           - Type: forward 
+#             TargetGroupName: my-target
+#   register: elb
